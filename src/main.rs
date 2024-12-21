@@ -23,13 +23,27 @@ fn run_command(cmd: &str, args: &[&str]) -> Result<Output, io::Error> {
     }
 }
 
-fn execute_command(command: &str, args: &[&str]) -> Result<(), String> {
-    let status = Command::new(command).args(args).status();
+fn execute_command(command: &str, args: &[&str], log: bool) -> Result<(), String> {
+    let status = if !log {
+        Command::new(command)
+            .args(args)
+            .stdout(fs::File::create("/dev/null").unwrap())
+            .stderr(fs::File::create("/dev/null").unwrap())
+            .status()
+    } else {
+        Command::new(command).args(args).status()
+    };
 
     match status {
         Ok(status) if status.success() => Ok(()),
-        Ok(status) => Err(format!("Command failed with status: {}", status)),
-        Err(e) => Err(format!("Failed to execute command: {}", e)),
+        Ok(status) => {
+            eprintln!("Command failed with status: {}", status);
+            Err(format!("Command failed with status: {}", status))
+        }
+        Err(e) => {
+            eprintln!("Failed to execute command: {}", e);
+            Err(format!("Failed to execute command: {}", e))
+        }
     }
 }
 
@@ -118,7 +132,7 @@ fn gcloud_login_check(account_name: &str) {
         println!(" Account: {} is not active.", account_name);
         println!();
         println!("Please login to gcloud.");
-        if let Err(e) = execute_command("gcloud", &["auth", "login"]) {
+        if let Err(e) = execute_command("gcloud", &["auth", "login"], true) {
             eprintln!("Failed to login: {}", e);
         }
         println!();
@@ -141,6 +155,7 @@ fn gcloud_application_login_check() {
     if let Err(e) = execute_command(
         "gcloud",
         &["auth", "application-default", "print-access-token"],
+        false,
     ) {
         println!(" Application login failed: {}", e);
         gcloud_application_login();
@@ -152,7 +167,7 @@ fn gcloud_application_login_check() {
 fn gcloud_application_login() {
     println!();
     println!("Please application login to gcloud.");
-    if let Err(e) = execute_command("gcloud", &["auth", "application-default", "login"]) {
+    if let Err(e) = execute_command("gcloud", &["auth", "application-default", "login"], true) {
         eprintln!("Failed to login: {}", e);
     }
     println!();
@@ -199,6 +214,7 @@ fn gcloud_config_active_check(profile_name: &str) {
                 profile_name,
                 "--quiet",
             ],
+            false,
         ) {
             eprintln!("Failed to activate profile {}: {}", profile_name, e);
         }
