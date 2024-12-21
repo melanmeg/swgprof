@@ -4,7 +4,7 @@ use std::fs;
 use std::io::{self};
 use std::os::unix::fs::symlink;
 use std::path::Path;
-use std::process::{exit, Command, Output};
+use std::process::{Command, Output};
 
 fn run_command(cmd: &str, args: &[&str]) -> Result<Output, io::Error> {
     let output = Command::new(cmd).args(args).output(); // 実行結果を取得
@@ -23,21 +23,13 @@ fn run_command(cmd: &str, args: &[&str]) -> Result<Output, io::Error> {
     }
 }
 
-fn run_login() {
-    let status = Command::new("gcloud").arg("auth").arg("login").status();
+fn execute_command(command: &str, args: &[&str]) -> Result<(), String> {
+    let status = Command::new(command).args(args).status();
 
     match status {
-        Ok(status) if status.success() => {
-            println!("gcloud auth login executed successfully.");
-        }
-        Ok(status) => {
-            println!("gcloud auth login failed with status: {}", status);
-            exit(1);
-        }
-        Err(e) => {
-            println!("Failed to execute gcloud auth login: {}", e);
-            exit(1);
-        }
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => Err(format!("Command failed with status: {}", status)),
+        Err(e) => Err(format!("Failed to execute command: {}", e)),
     }
 }
 
@@ -102,7 +94,11 @@ fn check_wrap(
     gcloud_config_set_check(profile_name, account_name, project_id, region, zone);
     gcloud_config_active_check(profile_name);
 
+    if fs::symlink_metadata(credentials_file).is_ok() {
+        fs::remove_file(credentials_file).expect("Failed to remove existing file or symlink");
+    }
     symlink(tmp_credentials_file, credentials_file).expect("Failed to create symlink");
+
     gcloud_application_login_check();
 }
 
@@ -122,7 +118,9 @@ fn gcloud_login_check(account_name: &str) {
         println!(" Account: {} is not active.", account_name);
         println!();
         println!("Please login to gcloud.");
-        run_login();
+        if let Err(e) = execute_command("gcloud", &["auth", "login"]) {
+            eprintln!("Failed to login: {}", e);
+        }
         println!();
     } else {
         println!(" Account {} is active.", account_name);
@@ -140,17 +138,11 @@ fn gcloud_credentials_set_check(tmp_credentials_file: &str, credentials_file: &s
 }
 
 fn gcloud_application_login_check() {
-    let output = run_command(
+    if let Err(e) = execute_command(
         "gcloud",
         &["auth", "application-default", "print-access-token"],
-    );
-
-    let output = output.unwrap();
-    if !output.status.success() {
-        println!(
-            " Application login failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+    ) {
+        println!(" Application login failed: {}", e);
         gcloud_application_login();
     } else {
         println!(" Application login is ok.");
@@ -160,7 +152,7 @@ fn gcloud_application_login_check() {
 fn gcloud_application_login() {
     println!();
     println!("Please application login to gcloud.");
-    if let Err(e) = run_command("gcloud", &["auth", "application-default", "login"]) {
+    if let Err(e) = execute_command("gcloud", &["auth", "application-default", "login"]) {
         eprintln!("Failed to login: {}", e);
     }
     println!();
@@ -186,18 +178,27 @@ fn gcloud_config_set_check(
 }
 
 fn gcloud_config_active_check(profile_name: &str) {
-    let output = run_command(
-        "gcloud",
-        &["config", "configurations", "list", "--filter=active=True"],
-    );
-    let output = output.unwrap();
+    let output = run_command("gcloud", &["config", "configurations", "list"]);
+    let output = match output {
+        Ok(output) => output,
+        Err(e) => {
+            eprintln!("Failed to list active configurations: {}", e);
+            return;
+        }
+    };
     let active_profile = String::from_utf8_lossy(&output.stdout);
 
     if !active_profile.contains(profile_name) {
         println!(" Profile {} is not active.", profile_name);
-        if let Err(e) = run_command(
+        if let Err(e) = execute_command(
             "gcloud",
-            &["config", "configurations", "activate", profile_name],
+            &[
+                "config",
+                "configurations",
+                "activate",
+                profile_name,
+                "--quiet",
+            ],
         ) {
             eprintln!("Failed to activate profile {}: {}", profile_name, e);
         }

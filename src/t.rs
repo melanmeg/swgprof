@@ -1,7 +1,11 @@
 use std::process::{exit, Command};
 
 fn main() {
-    let status = Command::new("gcloud").arg("auth").arg("login").status();
+    let status = Command::new("gcloud")
+        .arg("auth")
+        .arg("application-default")
+        .arg("login")
+        .status();
 
     match status {
         Ok(status) if status.success() => {
