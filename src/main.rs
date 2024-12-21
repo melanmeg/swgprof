@@ -1,14 +1,44 @@
+use regex::Regex;
 use std::env;
 use std::fs;
+use std::io::{self};
 use std::os::unix::fs::symlink;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::{exit, Command, Output};
 
-fn run_command(cmd: &str, args: &[&str]) -> Output {
-    Command::new(cmd)
-        .args(args)
-        .output()
-        .expect(&format!("Failed to execute: {} {:?}", cmd, args))
+fn run_command(cmd: &str, args: &[&str]) -> Result<Output, io::Error> {
+    let output = Command::new(cmd).args(args).output(); // 実行結果を取得
+
+    match output {
+        Ok(output) => {
+            if !output.stderr.is_empty() {
+                eprintln!("Error: {}", String::from_utf8_lossy(&output.stderr));
+            }
+            Ok(output)
+        }
+        Err(e) => {
+            eprintln!("Failed to execute: {} {:?}", cmd, args);
+            Err(e)
+        }
+    }
+}
+
+fn run_login() {
+    let status = Command::new("gcloud").arg("auth").arg("login").status();
+
+    match status {
+        Ok(status) if status.success() => {
+            println!("gcloud auth login executed successfully.");
+        }
+        Ok(status) => {
+            println!("gcloud auth login failed with status: {}", status);
+            exit(1);
+        }
+        Err(e) => {
+            println!("Failed to execute gcloud auth login: {}", e);
+            exit(1);
+        }
+    }
 }
 
 fn main() {
@@ -81,13 +111,18 @@ fn gcloud_login_check(account_name: &str) {
         "gcloud",
         &["auth", "list", "--format=value(account, status)"],
     );
+    let output = output.unwrap();
     let accounts = String::from_utf8_lossy(&output.stdout);
 
-    if !accounts.contains(&format!("{} *", account_name)) {
+    // 正規表現で "*" を前に持つアカウントを検出
+    let pattern = format!(r"{}(\s+\*)", account_name);
+    let re = Regex::new(&pattern).unwrap();
+
+    if !re.is_match(&accounts) {
         println!(" Account: {} is not active.", account_name);
         println!();
         println!("Please login to gcloud.");
-        run_command("gcloud", &["auth", "login"]);
+        run_login();
         println!();
     } else {
         println!(" Account {} is active.", account_name);
@@ -110,6 +145,7 @@ fn gcloud_application_login_check() {
         &["auth", "application-default", "print-access-token"],
     );
 
+    let output = output.unwrap();
     if !output.status.success() {
         println!(
             " Application login failed: {}",
@@ -124,7 +160,9 @@ fn gcloud_application_login_check() {
 fn gcloud_application_login() {
     println!();
     println!("Please application login to gcloud.");
-    run_command("gcloud", &["auth", "application-default", "login"]);
+    if let Err(e) = run_command("gcloud", &["auth", "application-default", "login"]) {
+        eprintln!("Failed to login: {}", e);
+    }
     println!();
 }
 
@@ -136,6 +174,7 @@ fn gcloud_config_set_check(
     zone: &str,
 ) {
     let output = run_command("gcloud", &["config", "configurations", "list"]);
+    let output = output.unwrap();
     let config_list = String::from_utf8_lossy(&output.stdout);
 
     if !config_list.contains(profile_name) {
@@ -151,14 +190,17 @@ fn gcloud_config_active_check(profile_name: &str) {
         "gcloud",
         &["config", "configurations", "list", "--filter=active=True"],
     );
+    let output = output.unwrap();
     let active_profile = String::from_utf8_lossy(&output.stdout);
 
     if !active_profile.contains(profile_name) {
         println!(" Profile {} is not active.", profile_name);
-        run_command(
+        if let Err(e) = run_command(
             "gcloud",
             &["config", "configurations", "activate", profile_name],
-        );
+        ) {
+            eprintln!("Failed to activate profile {}: {}", profile_name, e);
+        }
     } else {
         println!(" Profile {} is active.", profile_name);
     }
@@ -171,12 +213,17 @@ fn gcloud_config_set(
     region: &str,
     zone: &str,
 ) {
-    run_command(
-        "gcloud",
-        &["config", "configurations", "create", profile_name],
-    );
-    run_command("gcloud", &["config", "set", "account", account_name]);
-    run_command("gcloud", &["config", "set", "project", project_id]);
-    run_command("gcloud", &["config", "set", "compute/region", region]);
-    run_command("gcloud", &["config", "set", "compute/zone", zone]);
+    let commands = [
+        ("configurations", "create", profile_name),
+        ("set", "account", account_name),
+        ("set", "project", project_id),
+        ("set", "compute/region", region),
+        ("set", "compute/zone", zone),
+    ];
+
+    for &(cmd, arg, value) in &commands {
+        if let Err(e) = run_command("gcloud", &["config", cmd, arg, value]) {
+            eprintln!("Failed to {} {}: {}", cmd, arg, e);
+        }
+    }
 }
