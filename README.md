@@ -1,4 +1,4 @@
-# swgprof
+# switch gcloud profile
 
 ## 前提
 
