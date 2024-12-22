@@ -114,6 +114,8 @@ fn check_wrap(
     symlink(tmp_credentials_file, credentials_file).expect("Failed to create symlink");
 
     gcloud_application_login_check();
+
+    gcloud_login_session_check();
 }
 
 fn gcloud_login_check(account_name: &str) {
@@ -280,5 +282,14 @@ fn gcloud_config_set(
         if let Err(e) = execute_command("gcloud", &["config", cmd, arg, value], false) {
             eprintln!("Failed to {} {}: {}", cmd, arg, e);
         }
+    }
+}
+
+fn gcloud_login_session_check() {
+    if let Err(e) = execute_command("gcloud", &["storage", "buckets", "list"], false) {
+        println!(" Login session check error : {}", e);
+        gcloud_application_login();
+    } else {
+        println!(" Login session is ok.");
     }
 }
