@@ -13,6 +13,8 @@ sudo chown "$USER:$USER" "$HOME/.local/bin/$PACKAGE_NAME"
 sudo chmod +x "$HOME/.local/bin/$PACKAGE_NAME"
 ```
 
+- armはこちら `https://github.com/melanmeg/swgprof/releases/download/v1.0/swgprof-1.0-aarch64-unknown-linux-musl`
+
 ## 使い方
 
 - .mise.local.toml
