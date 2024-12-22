@@ -106,7 +106,7 @@ fn check_wrap(
 
     gcloud_credentials_set_check(tmp_credentials_file, credentials_file);
     gcloud_config_set_check(profile_name, account_name, project_id, region, zone);
-    gcloud_config_active_check(profile_name);
+    gcloud_config_active_check(profile_name, account_name, project_id, region, zone);
 
     if fs::symlink_metadata(credentials_file).is_ok() {
         fs::remove_file(credentials_file).expect("Failed to remove existing file or symlink");
@@ -184,26 +184,62 @@ fn gcloud_config_set_check(
     let output = output.unwrap();
     let config_list = String::from_utf8_lossy(&output.stdout);
 
-    if !config_list.contains(profile_name) {
+    let exists = config_list
+        .lines()
+        .skip(1) // ヘッダー行をスキップ
+        .any(|line| {
+            // 行の先頭の列（NAME）を取得
+            if let Some(name) = line.split_whitespace().next() {
+                name == profile_name
+            } else {
+                false
+            }
+        });
+
+    if !exists {
         println!(" Profile {} not found.", profile_name);
+        if let Err(e) = execute_command(
+            "gcloud",
+            &["config", "configurations", "create", profile_name],
+            false,
+        ) {
+            eprintln!("Failed to create profile {}: {}", profile_name, e);
+        }
         gcloud_config_set(profile_name, account_name, project_id, region, zone);
     } else {
         println!(" Profile {} found.", profile_name);
     }
 }
 
-fn gcloud_config_active_check(profile_name: &str) {
+fn gcloud_config_active_check(
+    profile_name: &str,
+    account_name: &str,
+    project_id: &str,
+    region: &str,
+    zone: &str,
+) {
     let output = run_command("gcloud", &["config", "configurations", "list"]);
-    let output = match output {
-        Ok(output) => output,
-        Err(e) => {
-            eprintln!("Failed to list active configurations: {}", e);
-            return;
-        }
-    };
-    let active_profile = String::from_utf8_lossy(&output.stdout);
+    let output = output.unwrap();
+    let config_list = String::from_utf8_lossy(&output.stdout);
 
-    if !active_profile.contains(profile_name) {
+    let is_active = config_list
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let mut columns = line.split_whitespace();
+            let name = columns.next();
+            let is_active = columns.next();
+
+            // `NAME` が一致する行の `IS_ACTIVE` を返す
+            if name == Some(profile_name) {
+                is_active.map(|val| val == "True")
+            } else {
+                None
+            }
+        })
+        .next();
+
+    if is_active != Some(true) {
         println!(" Profile {} is not active.", profile_name);
         if let Err(e) = execute_command(
             "gcloud",
@@ -218,6 +254,8 @@ fn gcloud_config_active_check(profile_name: &str) {
         ) {
             eprintln!("Failed to activate profile {}: {}", profile_name, e);
         }
+
+        gcloud_config_set(profile_name, account_name, project_id, region, zone);
     } else {
         println!(" Profile {} is active.", profile_name);
     }
@@ -231,15 +269,15 @@ fn gcloud_config_set(
     zone: &str,
 ) {
     let commands = [
-        ("configurations", "create", profile_name),
         ("set", "account", account_name),
         ("set", "project", project_id),
         ("set", "compute/region", region),
         ("set", "compute/zone", zone),
     ];
 
+    println!(" Setting profile {}.", profile_name);
     for &(cmd, arg, value) in &commands {
-        if let Err(e) = run_command("gcloud", &["config", cmd, arg, value]) {
+        if let Err(e) = execute_command("gcloud", &["config", cmd, arg, value], false) {
             eprintln!("Failed to {} {}: {}", cmd, arg, e);
         }
     }
